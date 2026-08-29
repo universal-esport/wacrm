@@ -60,3 +60,6 @@ $$;
 --    assertion (commit 42c7db0, run 31579334056) surfaced as
 --    `failed to execute query: error: ...` and exited 1. This is not a
 --    decorative green tick.
+
+
+
