@@ -655,6 +655,44 @@ describe('inbound webhook: inbound media is mirrored (#466)', () => {
   })
 })
 
+describe('inbound webhook: message.received is not held up by fan-out', () => {
+  const messageReceivedCalls = () =>
+    h.dispatchWebhookEvent.mock.calls.filter((call) => call[2] === 'message.received')
+
+  it('starts the delivery before flows and automations run', async () => {
+    let deliveredBeforeFlows = false
+    let deliveredBeforeAutomations = false
+    h.dispatchInboundToFlows.mockImplementation(async () => {
+      deliveredBeforeFlows = messageReceivedCalls().length === 1
+      return { consumed: false }
+    })
+    h.runAutomationsForTrigger.mockImplementation(async () => {
+      deliveredBeforeAutomations = messageReceivedCalls().length === 1
+    })
+
+    await runWebhook()
+
+    expect(deliveredBeforeFlows).toBe(true)
+    expect(deliveredBeforeAutomations).toBe(true)
+    expect(messageReceivedCalls()[0][3]).toMatchObject({
+      whatsapp_message_id: expect.any(String),
+      content_type: 'text',
+      text: 'hello',
+    })
+  })
+
+  it('still awaits the delivery before the after() callback resolves', async () => {
+    let settled = false
+    h.dispatchWebhookEvent.mockImplementation(
+      () => new Promise<void>((resolve) => setTimeout(() => { settled = true; resolve() }, 20)),
+    )
+
+    await runWebhook()
+
+    expect(settled).toBe(true)
+  })
+})
+
 describe('inbound webhook: after() awaits automations (#368)', () => {
   it('every triggered automation settles before the after() callback resolves', async () => {
     await runWebhook()

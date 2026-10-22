@@ -744,6 +744,26 @@ async function processMessage(
     return
   }
 
+  // Start the public `message.received` delivery now that the row exists,
+  // instead of after flows, automations and AI reply below: those are a
+  // dozen-plus sequential DB round trips, and an external bot answering
+  // through the public API was waiting on all of them. Runs concurrently;
+  // awaited at the end of this function so `after()` keeps it alive.
+  // Sits after the duplicate check, so a replayed delivery still never
+  // re-dispatches. `dispatchWebhookEvent` never throws.
+  const messageReceivedDelivery = dispatchWebhookEvent(
+    supabaseAdmin(),
+    accountId,
+    'message.received',
+    {
+      conversation_id: conversation.id,
+      contact_id: contactRecord.id,
+      whatsapp_message_id: message.id,
+      content_type: contentType,
+      text: contentText,
+    }
+  )
+
   const isFirstInboundMessage = await claimFirstInboundMessage(
     supabaseAdmin(),
     conversation,
@@ -916,20 +936,13 @@ async function processMessage(
     })
   }
 
-  // message.received webhook (public API). Awaited — not fire-and-forget
-  // — because we're inside the route's `after()` block, which only keeps
-  // the function alive for promises it can see; a detached promise could
-  // be frozen before it delivers. `dispatchWebhookEvent` early-exits
-  // when the account has no matching endpoint and never throws.
-  // (conversation.created is emitted earlier, right after the thread is
-  // opened.)
-  await dispatchWebhookEvent(supabaseAdmin(), accountId, 'message.received', {
-    conversation_id: conversation.id,
-    contact_id: contactRecord.id,
-    whatsapp_message_id: message.id,
-    content_type: contentType,
-    text: contentText,
-  })
+  // message.received webhook (public API), started right after the
+  // insert above. Awaited — not fire-and-forget — because we're inside
+  // the route's `after()` block, which only keeps the function alive for
+  // promises it can see; a detached promise could be frozen before it
+  // delivers. (conversation.created is emitted earlier, right after the
+  // thread is opened.)
+  await messageReceivedDelivery
 }
 
 async function parseMessageContent(
